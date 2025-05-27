@@ -9,7 +9,6 @@ from encrypter import encrypt_file
 from decrypter import decrypt_file
 from restore import restore_file
 import datetime
-import shutil
 
 app = Flask(__name__)
 
@@ -30,18 +29,6 @@ for folder in [UPLOAD_FOLDER, KEY_FOLDER, FILES_FOLDER, ENCRYPTED_FOLDER,
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
-
-def cleanup_files(filepath, encrypted_file=None, key_path=None):
-    """Clean up temporary files"""
-    try:
-        if filepath and os.path.exists(filepath):
-            os.remove(filepath)
-        if encrypted_file and os.path.exists(encrypted_file):
-            os.remove(encrypted_file)
-        if key_path and os.path.exists(key_path):
-            os.remove(key_path)
-    except Exception as e:
-        print(f"Error during cleanup: {str(e)}")
 
 def get_local_ip():
     """Get the local IP address of the machine"""
@@ -117,13 +104,9 @@ def share_file():
     
     filename = secure_filename(file.filename)
     filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-    encrypted_file = None
-    key_path = None
+    file.save(filepath)
     
     try:
-        # Save the uploaded file
-        file.save(filepath)
-        
         # Divide and encrypt the file
         divide_file(filepath)
         encrypted_file = encrypt_file(filepath)
@@ -143,8 +126,7 @@ def share_file():
                 'filename': filename,
                 'encrypted_data': encrypted_data,
                 'key_data': key_data
-            },
-            timeout=30  # Increased timeout for larger files
+            }
         )
         
         if response.status_code == 200:
@@ -155,8 +137,13 @@ def share_file():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
     finally:
-        # Cleanup temporary files
-        cleanup_files(filepath, encrypted_file, key_path)
+        # Cleanup
+        if os.path.exists(filepath):
+            os.remove(filepath)
+        if os.path.exists(encrypted_file):
+            os.remove(encrypted_file)
+        if os.path.exists(key_path):
+            os.remove(key_path)
 
 @app.route('/receive-file', methods=['POST'])
 def receive_file():
@@ -168,32 +155,34 @@ def receive_file():
     encrypted_data = base64.b64decode(data['encrypted_data'])
     key_data = base64.b64decode(data['key_data'])
     
+    # Save encrypted file and key
     encrypted_path = os.path.join(ENCRYPTED_FOLDER, filename)
     key_path = os.path.join(KEY_FOLDER, f"{filename}.key")
-    decrypted_file = None
+    
+    with open(encrypted_path, 'wb') as f:
+        f.write(encrypted_data)
+    
+    with open(key_path, 'wb') as f:
+        f.write(key_data)
     
     try:
-        # Save encrypted file and key
-        with open(encrypted_path, 'wb') as f:
-            f.write(encrypted_data)
-        
-        with open(key_path, 'wb') as f:
-            f.write(key_data)
-        
         # Decrypt and restore file
         decrypted_file = decrypt_file(encrypted_path)
         restored_file = restore_file(decrypted_file)
         
         # Move to received files
         final_path = os.path.join(RECEIVED_FILES_FOLDER, filename)
-        shutil.move(restored_file, final_path)
+        os.rename(restored_file, final_path)
         
         return jsonify({'message': 'File received and decrypted successfully'})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
     finally:
-        # Cleanup temporary files
-        cleanup_files(encrypted_path, decrypted_file, key_path)
+        # Cleanup
+        if os.path.exists(encrypted_path):
+            os.remove(encrypted_path)
+        if os.path.exists(key_path):
+            os.remove(key_path)
 
 @app.route('/received-files')
 def list_received_files():
