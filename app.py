@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify, send_file, render_template
 import os
 import base64
 import requests
+import socket
 from werkzeug.utils import secure_filename
 from divider import divide_file
 from encrypter import encrypt_file
@@ -29,12 +30,28 @@ for folder in [UPLOAD_FOLDER, KEY_FOLDER, FILES_FOLDER, ENCRYPTED_FOLDER,
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 
+def get_local_ip():
+    """Get the local IP address of the machine"""
+    try:
+        # Create a socket connection to an external server
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "127.0.0.1"
+
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 @app.route('/')
 def index():
     return render_template('index.html')
+
+@app.route('/get-local-ip')
+def local_ip():
+    return jsonify({'ip': get_local_ip()})
 
 @app.route('/connect', methods=['GET', 'POST'])
 def connect():
@@ -43,27 +60,18 @@ def connect():
         if not peer_ip:
             return jsonify({'error': 'No peer IP provided'}), 400
         
-        # Print debug information
-        print(f"Attempting to connect to peer at: http://{peer_ip}:8003/test-connection")
-        
         try:
             # Add timeout to prevent hanging
             response = requests.get(f'http://{peer_ip}:8003/test-connection', timeout=5)
-            print(f"Response status code: {response.status_code}")
-            print(f"Response content: {response.text}")
-            
             if response.status_code == 200:
                 return jsonify({'message': 'Successfully connected to peer'})
             else:
-                return jsonify({'error': f'Peer responded with status code: {response.status_code}. Response: {response.text}'}), 400
-        except requests.exceptions.ConnectionError as e:
-            print(f"Connection error: {str(e)}")
+                return jsonify({'error': f'Peer responded with status code: {response.status_code}'}), 400
+        except requests.exceptions.ConnectionError:
             return jsonify({'error': 'Could not establish connection to peer. Make sure the peer is running and the IP address is correct.'}), 400
-        except requests.exceptions.Timeout as e:
-            print(f"Timeout error: {str(e)}")
+        except requests.exceptions.Timeout:
             return jsonify({'error': 'Connection timed out. The peer might be offline or unreachable.'}), 400
         except requests.exceptions.RequestException as e:
-            print(f"Request error: {str(e)}")
             return jsonify({'error': f'Connection error: {str(e)}'}), 400
     
     return render_template('connect.html')
@@ -71,17 +79,13 @@ def connect():
 @app.route('/test-connection')
 def test_connection():
     try:
-        print("Received test connection request")
         # Add a simple response to verify the connection
-        response = {
+        return jsonify({
             'status': 'connected',
             'message': 'Connection test successful',
             'timestamp': str(datetime.datetime.now())
-        }
-        print(f"Sending response: {response}")
-        return jsonify(response)
+        })
     except Exception as e:
-        print(f"Error in test connection: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/share-file', methods=['POST'])
@@ -136,6 +140,10 @@ def share_file():
         # Cleanup
         if os.path.exists(filepath):
             os.remove(filepath)
+        if os.path.exists(encrypted_file):
+            os.remove(encrypted_file)
+        if os.path.exists(key_path):
+            os.remove(key_path)
 
 @app.route('/receive-file', methods=['POST'])
 def receive_file():

@@ -42,6 +42,33 @@
 
 <div class="card mt-4">
   <div class="card-header">
+    <h2>Network Test</h2>
+  </div>
+  <div class="card-body">
+    <form id="pingForm" onsubmit="return testPing(event)">
+      <div class="mb-3">
+        <label for="ping_ip" class="form-label"
+          >Test Network Connectivity</label
+        >
+        <div class="input-group">
+          <input
+            type="text"
+            class="form-control"
+            id="ping_ip"
+            name="ping_ip"
+            required
+            placeholder="Enter IP address to test"
+          />
+          <button type="submit" class="btn btn-outline-primary">Ping</button>
+        </div>
+      </div>
+    </form>
+    <div id="pingResult" class="mt-3"></div>
+  </div>
+</div>
+
+<div class="card mt-4">
+  <div class="card-header">
     <h2>Troubleshooting</h2>
   </div>
   <div class="card-body">
@@ -51,6 +78,19 @@
       <li>Check if any firewall is blocking port 8003</li>
       <li>Ensure both peers are on the same network</li>
       <li>Try pinging the peer's IP address to verify network connectivity</li>
+      <li>
+        Check Windows Firewall settings:
+        <ul>
+          <li>Open Windows Defender Firewall</li>
+          <li>
+            Click "Allow an app or feature through Windows Defender Firewall"
+          </li>
+          <li>Click "Change settings"</li>
+          <li>Click "Allow another app"</li>
+          <li>Browse to your Python executable</li>
+          <li>Make sure both "Private" and "Public" are checked</li>
+        </ul>
+      </li>
     </ul>
   </div>
 </div>
@@ -59,7 +99,7 @@
   // Function to get local IP address
   async function getLocalIp() {
     try {
-      const response = await fetch("https://api.ipify.org?format=json");
+      const response = await fetch("/get-local-ip");
       const data = await response.json();
       document.getElementById("localIp").textContent = data.ip;
     } catch (error) {
@@ -86,6 +126,57 @@
     }
   }
 
+  // Function to test ping
+  async function testPing(event) {
+    event.preventDefault();
+    const ip = document.getElementById("ping_ip").value;
+    const resultDiv = document.getElementById("pingResult");
+
+    resultDiv.innerHTML = `
+      <div class="alert alert-info">
+        Testing connection to ${ip}...
+      </div>
+    `;
+
+    try {
+      const response = await fetch("/connect", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: `peer_ip=${encodeURIComponent(ip)}`,
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        resultDiv.innerHTML = `
+          <div class="alert alert-success">
+            <h5>Connection Test Successful</h5>
+            <p>Successfully connected to ${ip}</p>
+          </div>
+        `;
+      } else {
+        resultDiv.innerHTML = `
+          <div class="alert alert-danger">
+            <h5>Connection Test Failed</h5>
+            <p>${data.error}</p>
+            ${data.details ? `<p>${data.details}</p>` : ""}
+          </div>
+        `;
+      }
+    } catch (error) {
+      resultDiv.innerHTML = `
+        <div class="alert alert-danger">
+          <h5>Error</h5>
+          <p>An unexpected error occurred: ${error.message}</p>
+        </div>
+      `;
+    }
+
+    return false;
+  }
+
   // Initialize status checks
   getLocalIp();
   checkServerStatus();
@@ -99,7 +190,7 @@
     // Disable button and show loading state
     connectButton.disabled = true;
     connectButton.innerHTML =
-      '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Connecting...';
+      "<span class='spinner-border spinner-border-sm' role='status' aria-hidden='true'></span> Connecting...";
     statusDiv.innerHTML = "";
 
     try {
@@ -115,35 +206,36 @@
 
       if (response.ok) {
         statusDiv.innerHTML = `
-                <div class="alert alert-success">
-                    <h5>Successfully connected to peer!</h5>
-                    <p>Peer IP: ${peerIp}</p>
-                    <p>Message: ${data.message}</p>
-                </div>
-            `;
+          <div class="alert alert-success">
+            <h5>Successfully connected to peer!</h5>
+            <p>Peer IP: ${peerIp}</p>
+            <p>Message: ${data.message}</p>
+          </div>
+        `;
       } else {
         statusDiv.innerHTML = `
-                <div class="alert alert-danger">
-                    <h5>Connection Failed</h5>
-                    <p>${data.error}</p>
-                    <hr>
-                    <p class="mb-0">Troubleshooting steps:</p>
-                    <ol>
-                        <li>Verify the peer's IP address is correct</li>
-                        <li>Make sure the peer's application is running</li>
-                        <li>Check if you can ping the peer's IP address</li>
-                        <li>Ensure no firewall is blocking port 8003</li>
-                    </ol>
-                </div>
-            `;
+          <div class="alert alert-danger">
+            <h5>Connection Failed</h5>
+            <p>${data.error}</p>
+            ${data.details ? `<p>${data.details}</p>` : ""}
+            <hr>
+            <p class="mb-0">Troubleshooting steps:</p>
+            <ol>
+              <li>Verify the peer's IP address is correct</li>
+              <li>Make sure the peer's application is running</li>
+              <li>Check if you can ping the peer's IP address</li>
+              <li>Ensure no firewall is blocking port 8003</li>
+            </ol>
+          </div>
+        `;
       }
     } catch (error) {
       statusDiv.innerHTML = `
-            <div class="alert alert-danger">
-                <h5>Error</h5>
-                <p>An unexpected error occurred: ${error.message}</p>
-            </div>
-        `;
+        <div class="alert alert-danger">
+          <h5>Error</h5>
+          <p>An unexpected error occurred: ${error.message}</p>
+        </div>
+      `;
     } finally {
       // Re-enable button
       connectButton.disabled = false;
