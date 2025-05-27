@@ -1,0 +1,165 @@
+from flask import Flask, request, jsonify, send_file, render_template
+import os
+import base64
+import requests
+from werkzeug.utils import secure_filename
+from divider import divide_file
+from encrypter import encrypt_file
+from decrypter import decrypt_file
+from restore import restore_file
+
+app = Flask(__name__)
+
+# Configuration
+UPLOAD_FOLDER = 'uploads'
+KEY_FOLDER = 'key'
+FILES_FOLDER = 'files'
+ENCRYPTED_FOLDER = 'encrypted'
+RESTORED_FOLDER = 'restored_file'
+RAW_DATA_FOLDER = 'raw_data'
+RECEIVED_FILES_FOLDER = 'received_files'
+ALLOWED_EXTENSIONS = {'pem', 'txt', 'pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png'}
+
+# Create necessary directories
+for folder in [UPLOAD_FOLDER, KEY_FOLDER, FILES_FOLDER, ENCRYPTED_FOLDER, 
+               RESTORED_FOLDER, RAW_DATA_FOLDER, RECEIVED_FILES_FOLDER]:
+    os.makedirs(folder, exist_ok=True)
+
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
+
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+@app.route('/connect', methods=['GET', 'POST'])
+def connect():
+    if request.method == 'POST':
+        peer_ip = request.form.get('peer_ip')
+        if not peer_ip:
+            return jsonify({'error': 'No peer IP provided'}), 400
+        
+        try:
+            response = requests.get(f'http://{peer_ip}:8003/test-connection')
+            if response.status_code == 200:
+                return jsonify({'message': 'Successfully connected to peer'})
+            else:
+                return jsonify({'error': 'Failed to connect to peer'}), 400
+        except requests.exceptions.RequestException:
+            return jsonify({'error': 'Could not connect to peer'}), 400
+    
+    return render_template('connect.html')
+
+@app.route('/test-connection/<ip>')
+def test_connection(ip):
+    return jsonify({'status': 'connected'})
+
+@app.route('/share-file', methods=['POST'])
+def share_file():
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file provided'}), 400
+    
+    file = request.files['file']
+    peer_ip = request.form.get('peer_ip')
+    
+    if not file or not peer_ip:
+        return jsonify({'error': 'Missing file or peer IP'}), 400
+    
+    if not allowed_file(file.filename):
+        return jsonify({'error': 'File type not allowed'}), 400
+    
+    filename = secure_filename(file.filename)
+    filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    file.save(filepath)
+    
+    try:
+        # Divide and encrypt the file
+        divide_file(filepath)
+        encrypted_file = encrypt_file(filepath)
+        
+        # Read encrypted file and key
+        with open(encrypted_file, 'rb') as f:
+            encrypted_data = base64.b64encode(f.read()).decode()
+        
+        key_path = os.path.join(KEY_FOLDER, f"{filename}.key")
+        with open(key_path, 'rb') as f:
+            key_data = base64.b64encode(f.read()).decode()
+        
+        # Send to peer
+        response = requests.post(
+            f'http://{peer_ip}:8003/receive-file',
+            json={
+                'filename': filename,
+                'encrypted_data': encrypted_data,
+                'key_data': key_data
+            }
+        )
+        
+        if response.status_code == 200:
+            return jsonify({'message': 'File shared successfully'})
+        else:
+            return jsonify({'error': 'Failed to share file'}), 400
+            
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        # Cleanup
+        if os.path.exists(filepath):
+            os.remove(filepath)
+
+@app.route('/receive-file', methods=['POST'])
+def receive_file():
+    data = request.json
+    if not all(k in data for k in ['filename', 'encrypted_data', 'key_data']):
+        return jsonify({'error': 'Missing required data'}), 400
+    
+    filename = secure_filename(data['filename'])
+    encrypted_data = base64.b64decode(data['encrypted_data'])
+    key_data = base64.b64decode(data['key_data'])
+    
+    # Save encrypted file and key
+    encrypted_path = os.path.join(ENCRYPTED_FOLDER, filename)
+    key_path = os.path.join(KEY_FOLDER, f"{filename}.key")
+    
+    with open(encrypted_path, 'wb') as f:
+        f.write(encrypted_data)
+    
+    with open(key_path, 'wb') as f:
+        f.write(key_data)
+    
+    try:
+        # Decrypt and restore file
+        decrypted_file = decrypt_file(encrypted_path)
+        restored_file = restore_file(decrypted_file)
+        
+        # Move to received files
+        final_path = os.path.join(RECEIVED_FILES_FOLDER, filename)
+        os.rename(restored_file, final_path)
+        
+        return jsonify({'message': 'File received and decrypted successfully'})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        # Cleanup
+        if os.path.exists(encrypted_path):
+            os.remove(encrypted_path)
+        if os.path.exists(key_path):
+            os.remove(key_path)
+
+@app.route('/received-files')
+def list_received_files():
+    files = os.listdir(RECEIVED_FILES_FOLDER)
+    return render_template('files.html', files=files)
+
+@app.route('/download/<filename>')
+def download_file(filename):
+    file_path = os.path.join(RECEIVED_FILES_FOLDER, secure_filename(filename))
+    if os.path.exists(file_path):
+        return send_file(file_path, as_attachment=True)
+    return jsonify({'error': 'File not found'}), 404
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=8003, debug=True) 

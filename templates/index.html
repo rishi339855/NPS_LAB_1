@@ -1,0 +1,55 @@
+{% extends "base.html" %} {% block content %}
+<div class="card">
+  <div class="card-header">
+    <h2>Share File</h2>
+  </div>
+  <div class="card-body">
+    <form action="/share-file" method="post" enctype="multipart/form-data">
+      <div class="mb-3">
+        <label for="peer_ip" class="form-label">Peer IP Address</label>
+        <input
+          type="text"
+          class="form-control"
+          id="peer_ip"
+          name="peer_ip"
+          required
+          placeholder="Enter peer's IP address (e.g., 192.168.1.100)"
+        />
+      </div>
+      <div class="mb-3">
+        <label for="file" class="form-label">Select File</label>
+        <input
+          type="file"
+          class="form-control"
+          id="file"
+          name="file"
+          required
+        />
+        <div class="form-text">
+          Supported formats: .pem, .txt, .pdf, .doc, .docx, .jpg, .jpeg, .png
+        </div>
+      </div>
+      <button type="submit" class="btn btn-primary">Share File</button>
+    </form>
+  </div>
+</div>
+
+<div class="card mt-4">
+  <div class="card-header">
+    <h2>Instructions</h2>
+  </div>
+  <div class="card-body">
+    <ol>
+      <li>
+        First, connect to a peer using the "Connect" link in the navigation bar
+      </li>
+      <li>Enter the peer's IP address and select a file to share</li>
+      <li>The file will be encrypted and sent to the peer</li>
+      <li>
+        The peer can download the decrypted file from their "Received Files"
+        page
+      </li>
+    </ol>
+  </div>
+</div>
+{% endblock %}
