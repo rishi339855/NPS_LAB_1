@@ -7,6 +7,7 @@ from divider import divide_file
 from encrypter import encrypt_file
 from decrypter import decrypt_file
 from restore import restore_file
+import datetime
 
 app = Flask(__name__)
 
@@ -42,20 +43,46 @@ def connect():
         if not peer_ip:
             return jsonify({'error': 'No peer IP provided'}), 400
         
+        # Print debug information
+        print(f"Attempting to connect to peer at: http://{peer_ip}:8003/test-connection")
+        
         try:
-            response = requests.get(f'http://{peer_ip}:8003/test-connection')
+            # Add timeout to prevent hanging
+            response = requests.get(f'http://{peer_ip}:8003/test-connection', timeout=5)
+            print(f"Response status code: {response.status_code}")
+            print(f"Response content: {response.text}")
+            
             if response.status_code == 200:
                 return jsonify({'message': 'Successfully connected to peer'})
             else:
-                return jsonify({'error': 'Failed to connect to peer'}), 400
-        except requests.exceptions.RequestException:
-            return jsonify({'error': 'Could not connect to peer'}), 400
+                return jsonify({'error': f'Peer responded with status code: {response.status_code}. Response: {response.text}'}), 400
+        except requests.exceptions.ConnectionError as e:
+            print(f"Connection error: {str(e)}")
+            return jsonify({'error': 'Could not establish connection to peer. Make sure the peer is running and the IP address is correct.'}), 400
+        except requests.exceptions.Timeout as e:
+            print(f"Timeout error: {str(e)}")
+            return jsonify({'error': 'Connection timed out. The peer might be offline or unreachable.'}), 400
+        except requests.exceptions.RequestException as e:
+            print(f"Request error: {str(e)}")
+            return jsonify({'error': f'Connection error: {str(e)}'}), 400
     
     return render_template('connect.html')
 
-@app.route('/test-connection/<ip>')
-def test_connection(ip):
-    return jsonify({'status': 'connected'})
+@app.route('/test-connection')
+def test_connection():
+    try:
+        print("Received test connection request")
+        # Add a simple response to verify the connection
+        response = {
+            'status': 'connected',
+            'message': 'Connection test successful',
+            'timestamp': str(datetime.datetime.now())
+        }
+        print(f"Sending response: {response}")
+        return jsonify(response)
+    except Exception as e:
+        print(f"Error in test connection: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/share-file', methods=['POST'])
 def share_file():
