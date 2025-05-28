@@ -9,6 +9,7 @@ from encrypter import encrypt_file
 from decrypter import decrypt_file
 from restore import restore_file
 import datetime
+import json
 
 app = Flask(__name__)
 
@@ -20,6 +21,7 @@ ENCRYPTED_FOLDER = 'encrypted'
 RESTORED_FOLDER = 'restored_file'
 RAW_DATA_FOLDER = 'raw_data'
 RECEIVED_FILES_FOLDER = 'received_files'
+METADATA_FILE = 'file_metadata.json'
 ALLOWED_EXTENSIONS = {'pem', 'txt', 'pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png'}
 
 # Create necessary directories
@@ -45,6 +47,18 @@ def get_local_ip():
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
+def load_metadata():
+    """Load file metadata from JSON file"""
+    if os.path.exists(METADATA_FILE):
+        with open(METADATA_FILE, 'r') as f:
+            return json.load(f)
+    return {}
+
+def save_metadata(metadata):
+    """Save file metadata to JSON file"""
+    with open(METADATA_FILE, 'w') as f:
+        json.dump(metadata, f)
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -53,40 +67,25 @@ def index():
 def local_ip():
     return jsonify({'ip': get_local_ip()})
 
-@app.route('/connect', methods=['GET', 'POST'])
-def connect():
-    if request.method == 'POST':
-        peer_ip = request.form.get('peer_ip')
-        if not peer_ip:
-            return jsonify({'error': 'No peer IP provided'}), 400
-        
-        try:
-            # Add timeout to prevent hanging
-            response = requests.get(f'http://{peer_ip}:8003/test-connection', timeout=5)
-            if response.status_code == 200:
-                return jsonify({'message': 'Successfully connected to peer'})
-            else:
-                return jsonify({'error': f'Peer responded with status code: {response.status_code}'}), 400
-        except requests.exceptions.ConnectionError:
-            return jsonify({'error': 'Could not establish connection to peer. Make sure the peer is running and the IP address is correct.'}), 400
-        except requests.exceptions.Timeout:
-            return jsonify({'error': 'Connection timed out. The peer might be offline or unreachable.'}), 400
-        except requests.exceptions.RequestException as e:
-            return jsonify({'error': f'Connection error: {str(e)}'}), 400
-    
-    return render_template('connect.html')
-
-@app.route('/test-connection')
+@app.route('/test-connection', methods=['POST'])
 def test_connection():
+    peer_ip = request.form.get('peer_ip')
+    if not peer_ip:
+        return jsonify({'error': 'No peer IP provided'}), 400
+    
     try:
-        # Add a simple response to verify the connection
-        return jsonify({
-            'status': 'connected',
-            'message': 'Connection test successful',
-            'timestamp': str(datetime.datetime.now())
-        })
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        # Add timeout to prevent hanging
+        response = requests.get(f'http://{peer_ip}:8003/test-connection', timeout=5)
+        if response.status_code == 200:
+            return jsonify({'message': 'Successfully connected to peer'})
+        else:
+            return jsonify({'error': f'Peer responded with status code: {response.status_code}'}), 400
+    except requests.exceptions.ConnectionError:
+        return jsonify({'error': 'Could not establish connection to peer. Make sure the peer is running and the IP address is correct.'}), 400
+    except requests.exceptions.Timeout:
+        return jsonify({'error': 'Connection timed out. The peer might be offline or unreachable.'}), 400
+    except requests.exceptions.RequestException as e:
+        return jsonify({'error': f'Connection error: {str(e)}'}), 400
 
 @app.route('/share-file', methods=['POST'])
 def share_file():
@@ -125,7 +124,8 @@ def share_file():
             json={
                 'filename': filename,
                 'encrypted_data': encrypted_data,
-                'key_data': key_data
+                'key_data': key_data,
+                'timestamp': str(datetime.datetime.now())
             }
         )
         
@@ -154,6 +154,7 @@ def receive_file():
     filename = secure_filename(data['filename'])
     encrypted_data = base64.b64decode(data['encrypted_data'])
     key_data = base64.b64decode(data['key_data'])
+    timestamp = data.get('timestamp', str(datetime.datetime.now()))
     
     # Save encrypted file and key
     encrypted_path = os.path.join(ENCRYPTED_FOLDER, filename)
@@ -174,6 +175,14 @@ def receive_file():
         final_path = os.path.join(RECEIVED_FILES_FOLDER, filename)
         os.rename(restored_file, final_path)
         
+        # Update metadata
+        metadata = load_metadata()
+        metadata[filename] = {
+            'received_at': timestamp,
+            'size': os.path.getsize(final_path)
+        }
+        save_metadata(metadata)
+        
         return jsonify({'message': 'File received and decrypted successfully'})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -187,7 +196,18 @@ def receive_file():
 @app.route('/received-files')
 def list_received_files():
     files = os.listdir(RECEIVED_FILES_FOLDER)
-    return render_template('files.html', files=files)
+    metadata = load_metadata()
+    file_info = []
+    
+    for file in files:
+        info = metadata.get(file, {})
+        file_info.append({
+            'name': file,
+            'received_at': info.get('received_at', 'Unknown'),
+            'size': info.get('size', 0)
+        })
+    
+    return render_template('files.html', files=file_info)
 
 @app.route('/download/<filename>')
 def download_file(filename):
