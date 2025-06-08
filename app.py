@@ -9,7 +9,7 @@ from encrypter import encrypt_file
 from decrypter import decrypt_file
 from restore import restore_file
 import datetime
-import json
+import shutil
 
 app = Flask(__name__)
 
@@ -31,6 +31,18 @@ for folder in [UPLOAD_FOLDER, KEY_FOLDER, FILES_FOLDER, ENCRYPTED_FOLDER,
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
+
+def cleanup_files(filepath, encrypted_file=None, key_path=None):
+    """Clean up temporary files"""
+    try:
+        if filepath and os.path.exists(filepath):
+            os.remove(filepath)
+        if encrypted_file and os.path.exists(encrypted_file):
+            os.remove(encrypted_file)
+        if key_path and os.path.exists(key_path):
+            os.remove(key_path)
+    except Exception as e:
+        print(f"Error during cleanup: {str(e)}")
 
 def get_local_ip():
     """Get the local IP address of the machine"""
@@ -103,9 +115,13 @@ def share_file():
     
     filename = secure_filename(file.filename)
     filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-    file.save(filepath)
+    encrypted_file = None
+    key_path = None
     
     try:
+        # Save the uploaded file
+        file.save(filepath)
+        
         # Divide and encrypt the file
         divide_file(filepath)
         encrypted_file = encrypt_file(filepath)
@@ -124,9 +140,9 @@ def share_file():
             json={
                 'filename': filename,
                 'encrypted_data': encrypted_data,
-                'key_data': key_data,
-                'timestamp': str(datetime.datetime.now())
-            }
+                'key_data': key_data
+            },
+            timeout=30  # Increased timeout for larger files
         )
         
         if response.status_code == 200:
@@ -137,13 +153,8 @@ def share_file():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
     finally:
-        # Cleanup
-        if os.path.exists(filepath):
-            os.remove(filepath)
-        if os.path.exists(encrypted_file):
-            os.remove(encrypted_file)
-        if os.path.exists(key_path):
-            os.remove(key_path)
+        # Cleanup temporary files
+        cleanup_files(filepath, encrypted_file, key_path)
 
 @app.route('/receive-file', methods=['POST'])
 def receive_file():
@@ -156,42 +167,32 @@ def receive_file():
     key_data = base64.b64decode(data['key_data'])
     timestamp = data.get('timestamp', str(datetime.datetime.now()))
     
-    # Save encrypted file and key
     encrypted_path = os.path.join(ENCRYPTED_FOLDER, filename)
     key_path = os.path.join(KEY_FOLDER, f"{filename}.key")
-    
-    with open(encrypted_path, 'wb') as f:
-        f.write(encrypted_data)
-    
-    with open(key_path, 'wb') as f:
-        f.write(key_data)
+    decrypted_file = None
     
     try:
+        # Save encrypted file and key
+        with open(encrypted_path, 'wb') as f:
+            f.write(encrypted_data)
+        
+        with open(key_path, 'wb') as f:
+            f.write(key_data)
+        
         # Decrypt and restore file
         decrypted_file = decrypt_file(encrypted_path)
         restored_file = restore_file(decrypted_file)
         
         # Move to received files
         final_path = os.path.join(RECEIVED_FILES_FOLDER, filename)
-        os.rename(restored_file, final_path)
-        
-        # Update metadata
-        metadata = load_metadata()
-        metadata[filename] = {
-            'received_at': timestamp,
-            'size': os.path.getsize(final_path)
-        }
-        save_metadata(metadata)
+        shutil.move(restored_file, final_path)
         
         return jsonify({'message': 'File received and decrypted successfully'})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
     finally:
-        # Cleanup
-        if os.path.exists(encrypted_path):
-            os.remove(encrypted_path)
-        if os.path.exists(key_path):
-            os.remove(key_path)
+        # Cleanup temporary files
+        cleanup_files(encrypted_path, decrypted_file, key_path)
 
 @app.route('/received-files')
 def list_received_files():
