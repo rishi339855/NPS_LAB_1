@@ -9,8 +9,19 @@ from encrypter import encrypt_file
 from decrypter import decrypt_file
 from restore import restore_file
 import datetime
+from flask_cors import CORS
 
 app = Flask(__name__)
+# Configure CORS to allow all origins and methods
+CORS(app, resources={
+    r"/*": {
+        "origins": "*",
+        "methods": ["GET", "POST", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization"],
+        "expose_headers": ["Content-Type", "Authorization"],
+        "supports_credentials": True
+    }
+})
 
 # Configuration
 UPLOAD_FOLDER = 'uploads'
@@ -91,12 +102,16 @@ def connect():
 @app.route('/test-connection')
 def test_connection():
     try:
-        # Add a simple response to verify the connection
-        return jsonify({
+        response = jsonify({
             'status': 'connected',
             'message': 'Connection test successful',
             'timestamp': str(datetime.datetime.now())
         })
+        # Add CORS headers explicitly
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+        return response
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
